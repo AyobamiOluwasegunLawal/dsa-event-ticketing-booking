@@ -6,15 +6,22 @@ import {
   createStore,
   findBookingByReference,
   joinWaitlist,
+  publishEvent,
 } from '../src/domain/inventory.js';
 
 const store = createStore();
-const event = createEvent(store, { name: 'Summer Sounds' });
+const event = createEvent(store, {
+  title: 'Summer Sounds',
+  city: 'Lagos',
+  venue: 'City Hall',
+  date: '2026-12-05',
+});
 const tier = addTier(store, event.id, {
   name: 'General admission',
   capacity: 3,
   priceCents: 5000,
 });
+publishEvent(store, event.id);
 
 console.log(`Event: ${event.name} (${tier.capacity} ${tier.name} tickets)`);
 

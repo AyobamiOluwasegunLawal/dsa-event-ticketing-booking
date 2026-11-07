@@ -1,4 +1,5 @@
 import { DomainError } from './errors.js';
+import { parseISODate } from './dates.js';
 import { newId, newReference } from './ids.js';
 import { Queue } from './waitlistQueue.js';
 
@@ -75,8 +76,21 @@ export function createStore() {
 export function createEvent(store, input) {
   requireStore(store);
   requireObject(input, 'Event');
-  const name = requireText(input.name, 'Event name');
-  const event = { id: newId(), name, tierIds: [] };
+  const title = requireText(input.title, 'Event title');
+  const city = requireText(input.city, 'Event city');
+  const venue = requireText(input.venue, 'Event venue');
+  const date = requireText(input.date, 'Event date');
+  parseISODate(date, { label: 'Event date' });
+  const event = {
+    id: newId(),
+    title,
+    name: title,
+    city,
+    venue,
+    date,
+    published: false,
+    tierIds: [],
+  };
   store.events.set(event.id, event);
   return event;
 }
@@ -98,11 +112,68 @@ export function addTier(store, eventId, input) {
     name,
     capacity: input.capacity,
     available: input.capacity,
+    sold: 0,
     priceCents: input.priceCents,
   };
   store.tiers.set(tier.id, tier);
   event.tierIds.push(tier.id);
   return tier;
+}
+
+export function publishEvent(store, eventId) {
+  requireStore(store);
+  const event = getEvent(store, eventId);
+  if (event.tierIds.length === 0) {
+    fail('INVALID_STATE', 'An event must have at least one ticket tier before publishing.');
+  }
+  event.published = true;
+  return event;
+}
+
+export function unpublishEvent(store, eventId) {
+  requireStore(store);
+  const event = getEvent(store, eventId);
+  event.published = false;
+  return event;
+}
+
+export function listEventSummaries(store, options = {}) {
+  requireStore(store);
+  requireObject(options, 'List options');
+  const publishedOnly = options.publishedOnly === undefined
+    ? true
+    : options.publishedOnly;
+  if (typeof publishedOnly !== 'boolean') {
+    fail('VALIDATION', 'publishedOnly must be a boolean.');
+  }
+
+  const summaries = [];
+  for (const event of store.events.values()) {
+    if (publishedOnly && !event.published) {
+      continue;
+    }
+    summaries.push({
+      id: event.id,
+      title: event.title,
+      name: event.name,
+      city: event.city,
+      venue: event.venue,
+      date: event.date,
+      published: event.published,
+      tiers: event.tierIds.map((tierId) => {
+        const tier = store.tiers.get(tierId);
+        return {
+          id: tier.id,
+          name: tier.name,
+          capacity: tier.capacity,
+          sold: tier.sold,
+          available: tier.available,
+          priceCents: tier.priceCents,
+        };
+      }),
+    });
+  }
+  return summaries;
 }
 
 export function bookTickets(store, input) {
@@ -113,6 +184,9 @@ export function bookTickets(store, input) {
   const attendeeName = requireText(input.attendeeName, 'Attendee name');
   requirePositiveInteger(input.quantity, 'Ticket quantity', 10);
 
+  if (!event.published) {
+    fail('INVALID_STATE', 'Tickets can only be booked for published events.');
+  }
   if (tier.available < input.quantity) {
     fail('SOLD_OUT', `Only ${tier.available} tickets remain in the ${tier.name} tier.`);
   }
@@ -135,10 +209,11 @@ export function bookTickets(store, input) {
     attendeeName,
     quantity: input.quantity,
     totalCents,
-    status: 'CONFIRMED',
+    status: 'PENDING',
   };
 
   tier.available -= input.quantity;
+  tier.sold += input.quantity;
   store.bookings.push(booking);
   store.bookingsByReference.set(reference, booking);
   return booking;
@@ -160,6 +235,7 @@ export function cancelBooking(store, reference) {
 
   const tier = store.tiers.get(booking.tierId);
   tier.available += booking.quantity;
+  tier.sold -= booking.quantity;
   booking.status = 'CANCELLED';
   return booking;
 }
